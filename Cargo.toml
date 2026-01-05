@@ -28,6 +28,7 @@ embassy-net = { version = "0.7.1", features = [
   "medium-ethernet",
   "tcp",
   "udp",
+  "dns"
 ] }
 embedded-io = { version = "0.7.1", features = ["defmt"] }
 embedded-io-async = { version = "0.7.0", features = ["defmt"] }
@@ -54,9 +55,9 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
   "medium-ethernet",
   "multicast",
   "proto-dhcpv4",
-  # "proto-dns",
+  "proto-dns",
   "proto-ipv4",
-  # "socket-dns",
+  "socket-dns", 
   "socket-icmp",
   "socket-raw",
   "socket-tcp",
@@ -69,6 +70,10 @@ static_cell      = "2.1.1"
 # defmt = "0.3"
 defmt-rtt = "1.1.0"
 # esp-idf-hal = "0.45.2"
+reqwless = { version = "0.13.0", default-features = false, features = [
+    "embedded-tls",
+] }
+
 
 
 [profile.dev]
