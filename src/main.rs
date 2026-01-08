@@ -5,6 +5,7 @@
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for the duration of a data transfer."
 )]
+mod mqtt;
 
 use defmt::info;
 use defmt::error;
@@ -101,6 +102,7 @@ async fn main(spawner: Spawner) -> ! {
 
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
+    // spawner.spawn(mqtt::mqtt_task());
 
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
