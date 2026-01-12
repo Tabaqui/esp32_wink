@@ -69,7 +69,7 @@ defmt-rtt = "^1.1.0"
 # reqwless = { version = "^0.13.0", default-features = false, features = [
     # "embedded-tls",
 # ] }
-rust-mqtt ={ version = "0.4.1", default-features = false, features = ["bump", "v5"]}
+rust-mqtt ={ version = "0.4.1", default-features = false, features = ["bump", "v5", "defmt"]}
 
 
 

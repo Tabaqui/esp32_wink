@@ -7,35 +7,26 @@
 )]
 mod mqtt;
 
-// use embedded_nal_async::Dns;
-
-use alloc::boxed::Box;
 use defmt::error;
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_net::DhcpConfig;
 use embassy_net::{
-    Runner, Stack, StackResources,
-    dns::DnsSocket,
-    tcp::TcpSocket,
-    tcp::client::{TcpClient, TcpClientState},
+    Runner, StackResources,
 };
 use embassy_time::{Duration, Timer};
-use esp_hal::riscv::asm::nop;
-use esp_hal::{clock::CpuClock, ram, rng::Rng, timer::timg::TimerGroup};
+use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
 use esp_radio::wifi::{
     ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent, WifiStaState,
 };
-use static_cell::StaticCell;
 use {esp_backtrace as _, esp_println as _};
-// use reqwless::client::{HttpClient, TlsConfig};
 extern crate alloc;
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
         #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit().write(($val));
+        let x = STATIC_CELL.uninit().write($val);
         x
     }};
 }
@@ -55,9 +46,6 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
 
     esp_alloc::heap_allocator!(size: 128 * 1024);
-    // esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
-    // esp_alloc::heap_allocator!(size: 36 * 1024);
-    // esp_alloc::heap_allocator!(#[unsafe(link_section = ".dram2_uninit")] size: 64 * 1024);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let sw_interrupt =
@@ -73,28 +61,28 @@ async fn main(spawner: Spawner) -> ! {
     controller
         .set_power_saving(esp_radio::wifi::PowerSaveMode::Maximum)
         .unwrap();
+
     let wifi_interface = interfaces.sta;
 
     let config = embassy_net::Config::dhcpv4(DhcpConfig::default());
 
     let rng = Rng::new();
     let seed = (rng.random() as u64) << 32 | rng.random() as u64;
-    let tls_seed = rng.random() as u64 | ((rng.random() as u64) << 32);
 
     // Init network stack
     let (stack, runner) = embassy_net::new(
         wifi_interface,
         config,
-        mk_static!(StackResources<5>, StackResources::<5>::new()),
+        mk_static!(StackResources<3>, StackResources::<3>::new()),
         seed,
     );
 
-
+    let mqtt_buffer = mk_static!([u8; 1024], [0; 1024]);
+    
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
+    spawner.spawn(mqtt::mqtt_task(stack, mqtt_buffer)).ok();
 
-    let rx_buffer =  mk_static!([u8; 4096], [0; 4096]);
-    let tx_buffer = Box::leak(Box::new([0; 4096]));
 
     loop {
         if stack.is_link_up() {
@@ -109,38 +97,12 @@ async fn main(spawner: Spawner) -> ! {
             info!("Got IP: {}", config.address);
             break;
         }
-        Timer::after(Duration::from_millis(500)).await;
+        Timer::after(Duration::from_secs(5)).await;
     }
 
-    // loop {
-    Timer::after(Duration::from_millis(1_000)).await;
-
-    let mut socket = TcpSocket::new(stack, rx_buffer, tx_buffer);
-
-    socket.set_timeout(Some(Duration::from_secs(100)));
-
-    let remote_endpoint = (core::net::Ipv4Addr::new(192, 168, 1, 1), 1883);
-    info!("connecting...");
     loop {
-        let r = socket.connect(remote_endpoint).await;
-        if let Err(e) = r {
-            error!("connect error: {:?}", e);
-        
-        } else {
-            break;
-        }
-    }
-
-    info!("connected!");
-    Timer::after(Duration::from_secs(1)).await;
-    // break;
-
-    mqtt::mqtt_task(socket).await;
-
-    loop {
-        info!("Got waiting");
-        Timer::after(Duration::from_secs(1)).await;
-        
+        info!("Main got waiting");
+        Timer::after(Duration::from_secs(10)).await;
     }
 }
 
@@ -149,13 +111,10 @@ async fn connection(mut controller: WifiController<'static>) {
     info!("start connection task");
     info!("Device capabilities: {:?}", controller.capabilities());
     loop {
-        match esp_radio::wifi::sta_state() {
-            WifiStaState::Connected => {
-                // wait until we're no longer connected
-                controller.wait_for_event(WifiEvent::StaDisconnected).await;
-                Timer::after(Duration::from_millis(5000)).await
-            }
-            _ => {}
+        if esp_radio::wifi::sta_state() == WifiStaState::Connected {
+            // wait until we're no longer connected
+            controller.wait_for_event(WifiEvent::StaDisconnected).await;
+            Timer::after(Duration::from_millis(5000)).await
         }
         if !matches!(controller.is_started(), Ok(true)) {
             let station_config = ModeConfig::Client(
