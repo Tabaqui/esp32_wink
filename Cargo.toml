@@ -18,7 +18,7 @@ esp-rtos = { version = "^0.2.0", features = [
 defmt                  = "1.0.1"
 esp-bootloader-esp-idf = { version = "^0.4.0", features = ["defmt", "esp32c3"] }
 
-embassy-net = { version = "^0.7.1", features = [
+embassy-net = { version = "^0.8.0", features = [
   "defmt",
   "dhcpv4",
   "medium-ethernet",
@@ -66,10 +66,10 @@ static_cell      = "^2.1.1"
 # defmt = "0.3"
 defmt-rtt = "^1.1.0"
 # esp-idf-hal = "0.45.2"
-reqwless = { version = "^0.13.0", default-features = false, features = [
-    "embedded-tls",
-] }
-rust-mqtt ={ version = "0.3.1", default-features = false, features = ["no_std"]}
+# reqwless = { version = "^0.13.0", default-features = false, features = [
+    # "embedded-tls",
+# ] }
+rust-mqtt ={ version = "0.4.1", default-features = false, features = ["bump", "v5"]}
 
 
 
