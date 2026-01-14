@@ -70,6 +70,7 @@ defmt-rtt = "^1.1.0"
     # "embedded-tls",
 # ] }
 rust-mqtt ={ version = "0.4.1", default-features = false, features = ["bump", "v5", "defmt"]}
+embassy-futures = "0.1.2"
 
 
 
