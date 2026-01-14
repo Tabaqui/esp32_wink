@@ -59,7 +59,7 @@ async fn main(spawner: Spawner) -> ! {
         esp_radio::wifi::new(&*cr, peripherals.WIFI, Default::default()).unwrap();
 
     controller
-        .set_power_saving(esp_radio::wifi::PowerSaveMode::Maximum)
+        .set_power_saving(esp_radio::wifi::PowerSaveMode::Minimum)
         .unwrap();
 
     let wifi_interface = interfaces.sta;
