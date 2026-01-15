@@ -76,12 +76,10 @@ async fn main(spawner: Spawner) -> ! {
         mk_static!(StackResources<3>, StackResources::<3>::new()),
         seed,
     );
-
-    let mqtt_buffer = mk_static!([u8; 1024], [0; 1024]);
     
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
-    spawner.spawn(mqtt::mqtt_task(stack, mqtt_buffer)).ok();
+    spawner.spawn(mqtt::mqtt_task(stack)).ok();
 
 
     loop {

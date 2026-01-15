@@ -61,7 +61,7 @@ smoltcp = { version = "^0.12.0", default-features = false, features = [
 ] }
 
 critical-section = "^1.2.0"
-static_cell      = "^2.1.1"
+static_cell      = { version = "^2.1.1" }
 
 # defmt = "0.3"
 defmt-rtt = "^1.1.0"
@@ -70,7 +70,6 @@ defmt-rtt = "^1.1.0"
     # "embedded-tls",
 # ] }
 rust-mqtt ={ version = "0.4.1", default-features = false, features = ["bump", "v5", "defmt"]}
-embassy-futures = "0.1.2"
 
 
 

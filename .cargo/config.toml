@@ -3,6 +3,7 @@ runner = "espflash flash --monitor --chip esp32c3 --log-format defmt"
 
 [env]
 DEFMT_LOG="info"
+
 SSID = "OpenWrt"
 PASSWORD = "12345677"
 
