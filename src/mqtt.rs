@@ -1,16 +1,25 @@
-use core::net::Ipv4Addr;
+use core::ops::Deref;
+use core::{net::Ipv4Addr};
 
 use core::result::Result::*;
 use defmt::{error, info, warn};
 use embassy_executor::task;
 use embassy_net::{Stack, tcp::TcpSocket};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::{Receiver};
 use embassy_time::{Duration, Timer};
+use serde::{Deserialize, Serialize};
 
+use crate::led::{Light};
+
+use postcard::to_vec;
+
+use rust_mqtt::Bytes;
 use rust_mqtt::{
-    Bytes,
+    // Bytes,
     buffer::BumpBuffer,
     client::{
-        self, Client, MqttError,
+        Client, MqttError,
         event::{Event, Suback},
         options::{
             ConnectOptions, DisconnectOptions, PublicationOptions, RetainHandling,
@@ -18,32 +27,24 @@ use rust_mqtt::{
         },
     },
     config::{KeepAlive, SessionExpiryInterval},
-    types::{MqttBinary, MqttString, QoS, TopicName, VarByteInt},
+    types::{MqttBinary, MqttString, QoS, TopicName},
 };
 
-use {esp_backtrace as _, esp_println as _};
 
-macro_rules! mk_static {
-    ($t:ty,$val:expr) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit().write($val);
-        x
-    }};
-}
+use {esp_backtrace as _, esp_println as _};
 
 // type TClient = Client<'static, TcpSocket<'static>, BumpBuffer<'static>, 1, 1, 1>;
 
 const REMOTE_ENDPOINT: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 168, 1, 1), 1883);
 
 #[task]
-pub async fn mqtt_task(stack: Stack<'static>) {
+pub async fn mqtt_task(stack: Stack<'static>, l_rec: Receiver<'static, NoopRawMutex, Light, 3>) {
     wait_ip(stack).await;
 
     let o = ConnectOptions {
         session_expiry_interval: SessionExpiryInterval::Seconds(600),
         clean_start: false,
-        keep_alive: KeepAlive::Seconds(120),
+        keep_alive: KeepAlive::Seconds(600),
         will: Some(WillOptions {
             will_qos: QoS::ExactlyOnce,
             will_retain: true,
@@ -62,14 +63,13 @@ pub async fn mqtt_task(stack: Stack<'static>) {
 
     let topic = unsafe { TopicName::new_unchecked(MqttString::from_slice("el").unwrap()) };
 
-
     loop {
         let mut rx_buffer = [0u8; 4096];
         let mut tx_buffer = [0u8; 4096];
 
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
-        socket.set_timeout(Some(Duration::from_secs(100)));
+        socket.set_timeout(Some(Duration::from_secs(1000)));
 
         let mut mqtt_buffer = [0u8; 1024];
         let mut mqtt_bump = BumpBuffer::new(&mut mqtt_buffer);
@@ -96,7 +96,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
 
         subscribe_n_cofirm_async(topic.clone(), &mut client).await;
 
-        publish_n_confirm_async(topic.clone(), &mut client).await;
+        publish_n_confirm_async(l_rec, topic.clone(), &mut client).await;
 
         if (poll_async(&mut client).await).is_err() {
             unsafe {
@@ -111,7 +111,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
         }
 
         disconnect_gracefully_async(&mut client).await;
-        // client.abort().await;
+        break;
     }
 }
 
@@ -197,7 +197,10 @@ async fn subscribe_n_cofirm_async<'a>(
     }
 }
 
+
+
 async fn publish_n_confirm_async<'a>(
+    l_rec: Receiver<'static, NoopRawMutex, Light, 3>,
     topic: TopicName<'a>,
     client: &mut Client<'a, TcpSocket<'a>, BumpBuffer<'a>, 1, 1, 1>,
 ) {
@@ -207,32 +210,44 @@ async fn publish_n_confirm_async<'a>(
         qos: QoS::ExactlyOnce,
     };
 
-    match client
-        .publish(&pub_options, Bytes::from("anything".as_bytes()))
-        .await
-    {
-        Ok(i) => {
-            info!("Published message with packet identifier {}", i);
-            i
-        }
-        Err(e) => {
-            error!("Failed to send Publish {:?}", e);
-            return;
-        }
-    };
 
+    let mut current_light_num = 0;    
     loop {
-        match client.poll().await {
-            Ok(Event::PublishComplete(_)) => {
-                info!("Publish complete");
-                break;
+        let message = l_rec.receive().await;
+        info!("received {:?}", message);
+        let vzed = to_vec::<Light, 32>(&message).unwrap();
+        match client
+            .publish(&pub_options, Bytes::from(vzed.deref()))
+            .await
+        {
+            Ok(i) => {
+                info!("Published message with packet identifier {}", i);
+                i
             }
-            Ok(e) => warn!("Received event {:?}", e),
             Err(e) => {
-                error!("Failed to poll!: {:?}", e);
-                Timer::after(Duration::from_secs(1)).await;
+                error!("Failed to send Publish {:?}", e);
                 return;
             }
+        };
+
+        loop {
+            match client.poll().await {
+                Ok(Event::PublishComplete(_)) => {
+                    info!("Publish complete");
+                    break;
+                }
+                Ok(e) => warn!("Received event {:?}", e),
+                Err(e) => {
+                    error!("Failed to poll!: {:?}", e);
+                    Timer::after(Duration::from_secs(1)).await;
+                    return;
+                }
+            }
+        }
+        current_light_num += 1;
+        Timer::after(Duration::from_micros(100)).await;
+        if current_light_num > 2 {
+            break;
         }
     }
 }
@@ -271,4 +286,11 @@ async fn disconnect_gracefully_async<'a>(
             error!("Failed to disconnect from server: {:?}", e);
         }
     }
+}
+
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct RefStruct<'a> {
+    bytes: &'a [u8],
+    str_s: &'a str,
 }

@@ -6,6 +6,7 @@
     holding buffers for the duration of a data transfer."
 )]
 mod mqtt;
+mod led;
 
 use defmt::error;
 use defmt::info;
@@ -14,11 +15,16 @@ use embassy_net::DhcpConfig;
 use embassy_net::{
     Runner, StackResources,
 };
+use embassy_sync::channel::Channel;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
 use esp_radio::wifi::{
     ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent, WifiStaState,
 };
+
+use crate::led::Light;
+
 use {esp_backtrace as _, esp_println as _};
 extern crate alloc;
 
@@ -59,7 +65,7 @@ async fn main(spawner: Spawner) -> ! {
         esp_radio::wifi::new(&*cr, peripherals.WIFI, Default::default()).unwrap();
 
     controller
-        .set_power_saving(esp_radio::wifi::PowerSaveMode::Minimum)
+        .set_power_saving(esp_radio::wifi::PowerSaveMode::Maximum)
         .unwrap();
 
     let wifi_interface = interfaces.sta;
@@ -76,10 +82,16 @@ async fn main(spawner: Spawner) -> ! {
         mk_static!(StackResources<3>, StackResources::<3>::new()),
         seed,
     );
-    
+
+    // let l_channel = Channel::<NoopRawMutex, u32, 3>::new();
+
+    let l_channel = mk_static!(Channel<NoopRawMutex, Light, 3>, Channel::<NoopRawMutex, Light, 3>::new());
+
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
-    spawner.spawn(mqtt::mqtt_task(stack)).ok();
+    spawner.spawn(mqtt::mqtt_task(stack, l_channel.receiver())).ok();
+    spawner.spawn(led::led_task(l_channel.sender())).ok();
+
 
 
     loop {
@@ -126,7 +138,7 @@ async fn connection(mut controller: WifiController<'static>) {
             info!("Wifi started!");
 
             info!("Scan");
-            let scan_config = ScanConfig::default().with_max(10);
+            let scan_config = ScanConfig::default().with_max(5);
             let result = controller
                 .scan_with_config_async(scan_config)
                 .await
