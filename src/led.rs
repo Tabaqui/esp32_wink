@@ -3,10 +3,10 @@ use embassy_executor::task;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Sender;
 use embassy_time::{Duration, Timer};
-use serde::{Deserialize, Serialize};
+use minicbor::{Decode, Encode};
 
 #[task]
-pub async fn led_task(l_res: Sender<'static, NoopRawMutex, Light, 3>) {
+pub async fn led_task(l_res: &'static Sender<'static, NoopRawMutex, Light, 3>) {
     // init_led smart_led
 
     // light led on
@@ -25,14 +25,15 @@ pub async fn led_task(l_res: Sender<'static, NoopRawMutex, Light, 3>) {
 }
 
 #[derive(defmt::Format)]
-#[derive(Deserialize, Serialize)]
+#[derive(Encode, Decode)]
+#[cbor(map)]
 pub struct Light {
-    state: bool,
-    num: u8,
+    #[n(0)] state: bool,
+    #[n(1)] num: u32,
 }
 
 impl Light {
-    fn new_turned_off(num: u8) -> Self {
+    fn new_turned_off(num: u32) -> Self {
         Light { state: false, num }
     }
 }

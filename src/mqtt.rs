@@ -1,4 +1,3 @@
-use core::ops::Deref;
 use core::{net::Ipv4Addr};
 
 use core::result::Result::*;
@@ -8,15 +7,11 @@ use embassy_net::{Stack, tcp::TcpSocket};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Receiver};
 use embassy_time::{Duration, Timer};
-use serde::{Deserialize, Serialize};
 
 use crate::led::{Light};
 
-use postcard::to_vec;
-
 use rust_mqtt::Bytes;
 use rust_mqtt::{
-    // Bytes,
     buffer::BumpBuffer,
     client::{
         Client, MqttError,
@@ -33,12 +28,12 @@ use rust_mqtt::{
 
 use {esp_backtrace as _, esp_println as _};
 
-// type TClient = Client<'static, TcpSocket<'static>, BumpBuffer<'static>, 1, 1, 1>;
+type MyMqttClient<'a> = Client<'a, TcpSocket<'a>, BumpBuffer<'a>, 1, 1, 1>;
 
 const REMOTE_ENDPOINT: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 168, 1, 1), 1883);
 
 #[task]
-pub async fn mqtt_task(stack: Stack<'static>, l_rec: Receiver<'static, NoopRawMutex, Light, 3>) {
+pub async fn mqtt_task(stack: Stack<'static>, l_rec: &'static Receiver<'static, NoopRawMutex, Light, 3>) {
     wait_ip(stack).await;
 
     let o = ConnectOptions {
@@ -76,8 +71,7 @@ pub async fn mqtt_task(stack: Stack<'static>, l_rec: Receiver<'static, NoopRawMu
 
         Timer::after(Duration::from_secs(1)).await;
 
-        let mut client: Client<'_, TcpSocket<'_>, BumpBuffer<'_>, 1, 1, 1> =
-            Client::<'_, _, _, 1, 1, 1>::new(&mut mqtt_bump);
+        let mut client= Client::<'_, _, _, 1, 1, 1>::new(&mut mqtt_bump);
 
         Timer::after(Duration::from_secs(1)).await;
 
@@ -140,7 +134,7 @@ async fn connet_tcp_async<'a>(socket: &mut TcpSocket<'a>) {
 
 async fn mqtt_connect_async<'a>(
     socket: TcpSocket<'a>,
-    client: &mut Client<'a, TcpSocket<'a>, BumpBuffer<'a>, 1, 1, 1>,
+    client: &mut MyMqttClient<'a>,
     o: &ConnectOptions<'a>,
 ) {
     let c_info = client
@@ -161,7 +155,7 @@ async fn mqtt_connect_async<'a>(
 
 async fn subscribe_n_cofirm_async<'a>(
     topic: TopicName<'a>,
-    client: &mut Client<'a, TcpSocket<'a>, BumpBuffer<'a>, 1, 1, 1>,
+    client: &mut MyMqttClient<'a>,
 ) {
     let sub_options = SubscriptionOptions {
         retain_handling: RetainHandling::SendIfNotSubscribedBefore,
@@ -200,9 +194,9 @@ async fn subscribe_n_cofirm_async<'a>(
 
 
 async fn publish_n_confirm_async<'a>(
-    l_rec: Receiver<'static, NoopRawMutex, Light, 3>,
+    l_rec: &Receiver<'a, NoopRawMutex, Light, 3>,
     topic: TopicName<'a>,
-    client: &mut Client<'a, TcpSocket<'a>, BumpBuffer<'a>, 1, 1, 1>,
+    client: &mut MyMqttClient<'a>,
 ) {
     let pub_options = PublicationOptions {
         retain: false,
@@ -210,14 +204,20 @@ async fn publish_n_confirm_async<'a>(
         qos: QoS::ExactlyOnce,
     };
 
-
+    let mut buffer = [0u8; 32];
     let mut current_light_num = 0;    
+
     loop {
         let message = l_rec.receive().await;
         info!("received {:?}", message);
-        let vzed = to_vec::<Light, 32>(&message).unwrap();
+        
+        minicbor::encode(&message, buffer.as_mut()).unwrap();
+        info!("Encoded! {}", Bytes::from(buffer.as_mut()));
+        
         match client
-            .publish(&pub_options, Bytes::from(vzed.deref()))
+            // .publish(&pub_options, Bytes::from(vzed.deref()))
+            .publish(&pub_options, Bytes::from(buffer.as_mut()))
+
             .await
         {
             Ok(i) => {
@@ -253,7 +253,7 @@ async fn publish_n_confirm_async<'a>(
 }
 
 async fn poll_async<'a>(
-    client: &mut Client<'a, TcpSocket<'a>, BumpBuffer<'a>, 1, 1, 1>,
+    client: &mut MyMqttClient<'a>,
 ) -> Result<(), MqttError<'a>> {
     match client.poll().await {
         Ok(e) => info!("Received Event {:?}", e),
@@ -272,7 +272,7 @@ async fn poll_async<'a>(
 }
 
 async fn disconnect_gracefully_async<'a>(
-    client: &mut Client<'a, TcpSocket<'a>, BumpBuffer<'a>, 1, 1, 1>,
+    client: &mut MyMqttClient<'a>,
 ) {
     match client
         .disconnect(&DisconnectOptions {
@@ -288,9 +288,3 @@ async fn disconnect_gracefully_async<'a>(
     }
 }
 
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-struct RefStruct<'a> {
-    bytes: &'a [u8],
-    str_s: &'a str,
-}

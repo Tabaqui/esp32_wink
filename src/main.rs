@@ -16,7 +16,10 @@ use embassy_net::{
     Runner, StackResources,
 };
 use embassy_sync::channel::Channel;
+use embassy_sync::channel::Receiver;
+
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::Sender;
 use embassy_time::{Duration, Timer};
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
 use esp_radio::wifi::{
@@ -87,10 +90,13 @@ async fn main(spawner: Spawner) -> ! {
 
     let l_channel = mk_static!(Channel<NoopRawMutex, Light, 3>, Channel::<NoopRawMutex, Light, 3>::new());
 
+    let r = mk_static!(Receiver<NoopRawMutex, Light, 3>, l_channel.receiver());
+    let s = mk_static!(Sender<NoopRawMutex, Light, 3>, l_channel.sender());
+
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
-    spawner.spawn(mqtt::mqtt_task(stack, l_channel.receiver())).ok();
-    spawner.spawn(led::led_task(l_channel.sender())).ok();
+    spawner.spawn(mqtt::mqtt_task(stack, r)).ok();
+    spawner.spawn(led::led_task(s)).ok();
 
 
 
