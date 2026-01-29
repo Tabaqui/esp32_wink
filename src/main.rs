@@ -8,6 +8,7 @@
 mod mqtt;
 mod led;
 
+use alloc::boxed::Box;
 use defmt::error;
 use defmt::info;
 use embassy_executor::Spawner;
@@ -16,11 +17,9 @@ use embassy_net::{
     Runner, StackResources,
 };
 use embassy_sync::channel::Channel;
-use embassy_sync::channel::Receiver;
-
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::channel::Sender;
 use embassy_time::{Duration, Timer};
+use esp_hal::peripherals;
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
 use esp_radio::wifi::{
     ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent, WifiStaState,
@@ -30,15 +29,6 @@ use crate::led::Light;
 
 use {esp_backtrace as _, esp_println as _};
 extern crate alloc;
-
-macro_rules! mk_static {
-    ($t:ty,$val:expr) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit().write($val);
-        x
-    }};
-}
 
 const SSID: &str = env!("SSID");
 const PASSWORD: &str = env!("PASSWORD");
@@ -52,7 +42,8 @@ async fn main(spawner: Spawner) -> ! {
     // generator version: 1.0.1
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let peripherals = esp_hal::init(config);
+    let peripherals: esp_hal::peripherals::Peripherals = esp_hal::init(config);
+    // let rmt = ;
 
     esp_alloc::heap_allocator!(size: 128 * 1024);
 
@@ -61,11 +52,13 @@ async fn main(spawner: Spawner) -> ! {
         esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
 
+
+
     info!("Embassy initialized!");
 
-    let cr = mk_static!(esp_radio::Controller<'static>, esp_radio::init().unwrap());
+    let cr = Box::leak(Box::new(esp_radio::init().unwrap()));
     let (mut controller, interfaces) =
-        esp_radio::wifi::new(&*cr, peripherals.WIFI, Default::default()).unwrap();
+        esp_radio::wifi::new(cr, peripherals.WIFI, Default::default()).unwrap();
 
     controller
         .set_power_saving(esp_radio::wifi::PowerSaveMode::Maximum)
@@ -82,23 +75,27 @@ async fn main(spawner: Spawner) -> ! {
     let (stack, runner) = embassy_net::new(
         wifi_interface,
         config,
-        mk_static!(StackResources<3>, StackResources::<3>::new()),
+        Box::leak(Box::new(StackResources::<3>::new())),
         seed,
     );
 
     // let l_channel = Channel::<NoopRawMutex, u32, 3>::new();
 
-    let l_channel = mk_static!(Channel<NoopRawMutex, Light, 3>, Channel::<NoopRawMutex, Light, 3>::new());
+    let led_channel = Box::leak(Box::new(Channel::<NoopRawMutex, Light, 3>::new()));
 
-    let r = mk_static!(Receiver<NoopRawMutex, Light, 3>, l_channel.receiver());
-    let s = mk_static!(Sender<NoopRawMutex, Light, 3>, l_channel.sender());
+    let led_receiver = Box::leak(Box::new(led_channel.receiver()));
+    let led_sender = Box::leak(Box::new(led_channel.sender()));
 
+    
+let config = esp_hal::gpio::OutputConfig::default();
+let mut rmtPin = esp_hal::gpio::Output::new(peripherals.GPIO8, esp_hal::gpio::Level::High, config);
+    
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
-    spawner.spawn(mqtt::mqtt_task(stack, r)).ok();
-    spawner.spawn(led::led_task(s)).ok();
+    spawner.spawn(mqtt::mqtt_task(stack, led_sender)).ok();
+    spawner.spawn(led::led_task(led_receiver, peripherals.RMT, rmtPin)).ok();
 
-
+    
 
     loop {
         if stack.is_link_up() {
@@ -117,8 +114,8 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     loop {
-        info!("Main got waiting");
-        Timer::after(Duration::from_secs(10)).await;
+        // info!("Main got waiting");
+        Timer::after(Duration::from_millis(10)).await;
     }
 }
 
