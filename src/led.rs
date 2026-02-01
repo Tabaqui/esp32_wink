@@ -23,20 +23,20 @@ pub async fn led_task(
 ) {
     let freq = esp_hal::time::Rate::from_mhz(80);
 
-    const LEDS: usize = 128;
+    const LEDS: usize = 50;
 
     let mut led: RmtSmartLeds<
         '_,
         _,
         esp_hal::Async,
         smart_leds_trait::RGB<u8>,
-        color_order::Rgb,
+        color_order::Grb,
         Ws2812bTiming,
     > = {
         let rmt = Rmt::new(rmt, freq)
             .expect("Failed to initialize RMT0")
             .into_async();
-        RmtSmartLeds::<{ buffer_size::<RGB8>(LEDS) }, _, RGB8, color_order::Rgb, Ws2812bTiming>::new(
+        RmtSmartLeds::<{ buffer_size::<RGB8>(LEDS) }, _, RGB8, color_order::Grb, Ws2812bTiming>::new(
             rmt.channel0,
             gpio8,
         )
@@ -60,10 +60,27 @@ pub async fn led_task(
         
     }
 
+    let mut sing = Hsv {
+        hue: 0,
+        sat: 255,
+        val: 255,
+    };
+
+    data = [hsv2rgb(color); LEDS];
+                let fut = led.write(brightness(gamma(data.iter().cloned()), 128));
+    let f = fut.await;
+    f.unwrap();
+    Timer::after_millis(20).await;
+    let fut = led.write(brightness(gamma(data.iter().cloned()), 0));
+    let f = fut.await;
+    f.unwrap();
+    Timer::after_secs(1).await;
+
+
     loop {
         // Iterate over the rainbow!
-        for hue in 0..=255 {
-            color.hue = hue;
+        for val in 0..=255 {
+            // color.val = val;
             // Convert from the HSV color space (where we can easily transition from one
             // color to the other) to the RGB color space that we can then send to the LED
             data = [hsv2rgb(color); LEDS];
@@ -72,7 +89,7 @@ pub async fn led_task(
             // that the output it's not too bright.
 
             // This call already prepares the buffer.
-            let fut = led.write(brightness(gamma(data.iter().cloned()), 10));
+            let fut = led.write(brightness(gamma(data.iter().cloned()), val));
             // Put more led.write() calls (for other drivers) and other peripheral preparations here...
 
             // Dispatch all the LED writes at once.
