@@ -9,7 +9,7 @@
     // === Core rust-analyzer settings ===
     // "rust-analyzer.cargo.target": "riscv32imc-esp-espidf",  // your ESP32-C3 target
     "rust-analyzer.check.command": "clippy",                // use Clippy instead of cargo check (better diagnostics)
-    "rust-analyzer.checkOnSave": false,
+    "rust-analyzer.checkOnSave": true,
     // "rust-analyzer.checkOnSave.allTargets": false,          // faster checks, especially for embedded
     "rust-analyzer.procMacro.enable": true,
 

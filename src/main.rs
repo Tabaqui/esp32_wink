@@ -5,25 +5,26 @@
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for the duration of a data transfer."
 )]
-mod mqtt;
 mod led;
+mod mqtt;
 
 use alloc::boxed::Box;
 use defmt::error;
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_net::DhcpConfig;
-use embassy_net::{
-    Runner, StackResources,
-};
-use embassy_sync::channel::Channel;
+use embassy_net::{Runner, StackResources};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 use esp_hal::peripherals;
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
 use esp_radio::wifi::{
     ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent, WifiStaState,
 };
+use static_cell::StaticCell;
 
 use crate::led::Light;
 use crate::led::Ready;
@@ -37,6 +38,7 @@ const PASSWORD: &str = env!("PASSWORD");
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
+
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
@@ -52,8 +54,6 @@ async fn main(spawner: Spawner) -> ! {
     let sw_interrupt =
         esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
-
-
 
     info!("Embassy initialized!");
 
@@ -87,25 +87,33 @@ async fn main(spawner: Spawner) -> ! {
     let led_receiver = Box::leak(Box::new(led_channel.receiver()));
     let led_sender = Box::leak(Box::new(led_channel.sender()));
 
-    
-let config = esp_hal::gpio::OutputConfig::default();
-let rmt_pin: esp_hal::gpio::Output<'_> = esp_hal::gpio::Output::new(
-    peripherals.GPIO8, 
-    esp_hal::gpio::Level::High, 
-    config
-);
+    let config = esp_hal::gpio::OutputConfig::default();
+    let rmt_pin: esp_hal::gpio::Output<'_> =
+        esp_hal::gpio::Output::new(peripherals.GPIO8, esp_hal::gpio::Level::High, config);
 
-let led_status = Box::leak(Box::new(Channel::<NoopRawMutex, Ready, 3>::new()));
     
+    let led_status: &mut Channel<NoopRawMutex, Ready, 3> =
+        Box::leak(Box::new(Channel::<NoopRawMutex, Ready, 3>::new()));
+
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
-    spawner.spawn(mqtt::mqtt_task(stack, led_sender, led_status)).ok();
-    spawner.spawn(led::led_task(led_receiver, peripherals.RMT, rmt_pin, led_status)).ok();
+
+
+
+    let m = led::StripMisc::new(peripherals.RMT, rmt_pin).unwrap();
+    
+    let (ch, s_l) = led::init(m);
+    spawner.spawn(led::receive_light(ch, s_l)).ok();
+    
+    
 
     
+    // spawner.spawn(mqtt::mqtt_task(stack, led_sender, led_status)).ok();
+    // spawner.spawn(led::led_task(led_receiver, peripherals.RMT, rmt_pin, led_status)).ok();
 
     loop {
         if stack.is_link_up() {
+            ch.send(Ready::ip()).await;
             break;
         }
         Timer::after(Duration::from_millis(500)).await;

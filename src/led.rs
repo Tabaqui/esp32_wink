@@ -1,4 +1,4 @@
-use core::iter::Map;
+use core::{error::Error, iter::Map};
 
 use alloc::{boxed::Box, vec::Vec};
 use defmt::info;
@@ -24,8 +24,99 @@ use smart_leds::{
     hsv::{Hsv, hsv2rgb},
 };
 use smart_leds_trait::RGB8;
+use static_cell::StaticCell;
+
+static CH: StaticCell<Channel<NoopRawMutex, Ready, 3>> = StaticCell::new();
 
 const LEDS: usize = 50;
+
+pub struct StripMisc<'a> {
+    rmt: RMT<'a>,
+    gpio: Output<'a>,
+    ch: &'a mut Channel<NoopRawMutex, Ready, 3>,
+}
+
+impl<'a> StripMisc<'a> {
+    pub fn new(rmt: RMT<'a>, gpio: Output<'a>) -> Result<Self, &'a str> {
+        
+        let o_ch = CH.try_init(Channel::new());
+        match o_ch {
+            Some(ch) => Ok(StripMisc { rmt, gpio, ch }),
+            None => Err("was taken away!"),
+        }
+    }       
+}
+
+pub fn init<'a>(
+    s_m: StripMisc<'a>,
+) -> (
+    &'a mut Channel<NoopRawMutex, Ready, 3>,
+    RmtSmartLeds<
+        'a,
+        1201,
+        esp_hal::Async,
+        smart_leds_trait::RGB<u8>,
+        color_order::Grb,
+        Ws2812bTiming,
+    >,
+) {
+    let led: RmtSmartLeds<_, _, _, _, _> = {
+        let freq = esp_hal::time::Rate::from_mhz(80);
+
+        let rmt = Rmt::new(s_m.rmt, freq)
+            .expect("Failed to initialize RMT0")
+            .into_async();
+        RmtSmartLeds::<{ buffer_size::<RGB8>(LEDS) }, _, RGB8, color_order::Grb, Ws2812bTiming>::new(
+            rmt.channel0,
+            s_m.gpio,
+        )
+        .unwrap()
+    };
+
+    (s_m.ch, led)
+}
+
+fn get_red(val: u8) -> Hsv {
+    Hsv {
+        hue: 0,
+        sat: 255,
+        val,
+    }
+}
+
+#[task]
+pub async fn receive_light(
+    ch: &'static Channel<NoopRawMutex, Ready, 3>,
+    mut smart_leds: RmtSmartLeds<
+        'static,
+        1201,
+        esp_hal::Async,
+        smart_leds_trait::RGB<u8>,
+        color_order::Grb,
+        Ws2812bTiming,
+    >,
+) {
+    loop {
+        let n_ready = ch.receive().await;
+
+        let enlight = n_ready.enlight + n_ready.blink;
+        let colors = [0; LEDS]
+            .iter()
+            .map(|val| if val < &enlight { 255u8 } else { 0u8 })
+            .map(|val| { get_red(val) })
+            .map(hsv2rgb);
+
+        let g = gamma(colors);
+        let b = brightness(g, 10);
+        let fut = smart_leds.write(b);
+
+        let (_, res) = join(Timer::after_millis(500), fut).await;
+        res.unwrap();
+
+        info!(" Don ")
+        // smart_leds.write(iterator);
+    }
+}
 
 #[task]
 pub async fn led_task(
@@ -96,7 +187,6 @@ pub async fn led_task(
                     let f = fut.await;
                     f.unwrap();
                     Timer::after_millis(200).await;
-
                 }
             }
         }
