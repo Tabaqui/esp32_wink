@@ -1,0 +1,23 @@
+{
+    "rust-analyzer.cargo.allTargets": false,
+    "rust-analyzer.cargo.target": "riscv32imc-unknown-none-elf",
+    // "rust-analyzer.check.allTargets": false,
+    "rust-analyzer.check.extraArgs": [
+        "--target",
+        "riscv32imc-unknown-none-elf"
+    ],
+    // === Core rust-analyzer settings ===
+    // "rust-analyzer.cargo.target": "riscv32imc-esp-espidf",  // your ESP32-C3 target
+    "rust-analyzer.check.command": "clippy",                // use Clippy instead of cargo check (better diagnostics)
+    "rust-analyzer.checkOnSave": true,
+    // "rust-analyzer.checkOnSave.allTargets": false,          // faster checks, especially for embedded
+    "rust-analyzer.procMacro.enable": true,
+
+    // === Inlay hints (very helpful for embedded) ===
+    // "rust-analyzer.inlayHints.enable": true,
+    "rust-analyzer.inlayHints.typeHints.enable": true,
+    "rust-analyzer.inlayHints.parameterHints.enable": true,
+    "rust-analyzer.inlayHints.closingBraceHints.enable": false,
+
+
+}
