@@ -67,7 +67,7 @@ pub async fn led_task(
         let c = led_status_channel.receive();
 
         let s = select(r, c).await;
-        
+
         data = [hsv2rgb(color); LEDS];
 
         match s {
@@ -78,47 +78,52 @@ pub async fn led_task(
                 Timer::after_secs(2).await;
             }
             embassy_futures::select::Either::Second(r) => {
+                for i in 0..100 {
+                    info!("Blink");
 
-                let val: Box<dyn Fn(usize) -> u8> = Box::new(|t: usize| if t < r.blink as usize { 255 } else { 0 });
-                let strip_loading = (0..LEDS)
-                    .map(val)
-                    .map(|val| Hsv {
-                        hue: 0,
-                        sat: 255,
-                        val
-                    }).map(hsv2rgb);
+                    let val: Box<dyn Fn(usize) -> u8> =
+                        Box::new(|t: usize| if t < r.blink as usize { 255 } else { 0 });
+                    let strip_loading = (0..LEDS)
+                        .map(val)
+                        .map(|val| Hsv {
+                            hue: 0,
+                            sat: 255,
+                            val,
+                        })
+                        .map(hsv2rgb);
 
-                let fut = led.write(brightness(gamma(strip_loading), 128));
-                let f = fut.await;
-                f.unwrap();
-                Timer::after_millis(100).await;
-                
+                    let fut = led.write(brightness(gamma(strip_loading), 128));
+                    let f = fut.await;
+                    f.unwrap();
+                    Timer::after_millis(200).await;
+
+                }
             }
         }
 
-        // loop {
-        // Iterate over the rainbow!
-        for val in 0..=255 {
-            // color.val = val;
-            // Convert from the HSV color space (where we can easily transition from one
-            // color to the other) to the RGB color space that we can then send to the LED
-            data = [hsv2rgb(color); LEDS];
-            // When sending to the LED, we do a gamma correction first (see smart_leds
-            // documentation for details) and then limit the brightness to 10 out of 255 so
-            // that the output it's not too bright.
+        // // loop {
+        // // Iterate over the rainbow!
+        // for val in 0..=255 {
+        //     // color.val = val;
+        //     // Convert from the HSV color space (where we can easily transition from one
+        //     // color to the other) to the RGB color space that we can then send to the LED
+        //     data = [hsv2rgb(color); LEDS];
+        //     // When sending to the LED, we do a gamma correction first (see smart_leds
+        //     // documentation for details) and then limit the brightness to 10 out of 255 so
+        //     // that the output it's not too bright.
 
-            // This call already prepares the buffer.
+        //     // This call already prepares the buffer.
 
-            let dic = data.iter().cloned();
-            let fut = led.write(brightness(gamma(data.iter().cloned()), val));
-            // Put more led.write() calls (for other drivers) and other peripheral preparations here...
+        //     let dic = data.iter().cloned();
+        //     let fut = led.write(brightness(gamma(data.iter().cloned()), val));
+        //     // Put more led.write() calls (for other drivers) and other peripheral preparations here...
 
-            // Dispatch all the LED writes at once.
-            // (We simulate the second write instead with a delay.)
-            let (_, res) = join(Timer::after_millis(20), fut).await;
-            res.unwrap();
-            info!("Enlighten")
-        }
+        //     // Dispatch all the LED writes at once.
+        //     // (We simulate the second write instead with a delay.)
+        //     let (_, res) = join(Timer::after_millis(20), fut).await;
+        //     res.unwrap();
+        //     info!("Enlighten")
+        // }
     }
 }
 
