@@ -26,6 +26,7 @@ use esp_radio::wifi::{
 };
 
 use crate::led::Light;
+use crate::led::Ready;
 
 use {esp_backtrace as _, esp_println as _};
 extern crate alloc;
@@ -88,12 +89,18 @@ async fn main(spawner: Spawner) -> ! {
 
     
 let config = esp_hal::gpio::OutputConfig::default();
-let mut rmtPin = esp_hal::gpio::Output::new(peripherals.GPIO8, esp_hal::gpio::Level::High, config);
+let rmt_pin: esp_hal::gpio::Output<'_> = esp_hal::gpio::Output::new(
+    peripherals.GPIO8, 
+    esp_hal::gpio::Level::High, 
+    config
+);
+
+let led_status = Box::leak(Box::new(Channel::<NoopRawMutex, Ready, 3>::new()));
     
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
-    spawner.spawn(mqtt::mqtt_task(stack, led_sender)).ok();
-    spawner.spawn(led::led_task(led_receiver, peripherals.RMT, rmtPin)).ok();
+    spawner.spawn(mqtt::mqtt_task(stack, led_sender, led_status)).ok();
+    spawner.spawn(led::led_task(led_receiver, peripherals.RMT, rmt_pin, led_status)).ok();
 
     
 
@@ -114,8 +121,8 @@ let mut rmtPin = esp_hal::gpio::Output::new(peripherals.GPIO8, esp_hal::gpio::Le
     }
 
     loop {
-        // info!("Main got waiting");
-        Timer::after(Duration::from_millis(10)).await;
+        info!("Main got waiting");
+        Timer::after_secs(10).await;
     }
 }
 

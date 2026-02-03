@@ -1,18 +1,31 @@
+use core::iter::Map;
 
+use alloc::{boxed::Box, vec::Vec};
 use defmt::info;
 use embassy_executor::task;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Receiver};
+use embassy_futures::{join::join, select::select};
+use embassy_sync::{
+    blocking_mutex::raw::NoopRawMutex,
+    channel::{Channel, Receiver},
+};
 use embassy_time::{Duration, Timer, WithTimeout};
 use esp_hal::{
     gpio::Output,
     peripherals::{GPIO8, RMT},
     rmt::Rmt,
 };
-use embassy_futures::join::join;
-use esp_hal_smartled::{RmtSmartLeds, Ws2812Timing, Ws2812bTiming, buffer_size, color_order};
+use esp_hal_smartled::{
+    RmtSmartLeds, Ws2812Timing, Ws2812bTiming, buffer_size,
+    color_order::{self, Rgb},
+};
 use minicbor::{Decode, Encode};
-use smart_leds::{SmartLedsWriteAsync, brightness, gamma, hsv::{Hsv, hsv2rgb}};
+use smart_leds::{
+    RGB, SmartLedsWriteAsync, brightness, gamma,
+    hsv::{Hsv, hsv2rgb},
+};
 use smart_leds_trait::RGB8;
+
+const LEDS: usize = 50;
 
 #[task]
 pub async fn led_task(
@@ -20,10 +33,9 @@ pub async fn led_task(
     l_rec: &'static Receiver<'static, NoopRawMutex, Light, 3>,
     rmt: RMT<'static>,
     gpio8: Output<'static>,
+    led_status_channel: &'static Channel<NoopRawMutex, Ready, 3>,
 ) {
     let freq = esp_hal::time::Rate::from_mhz(80);
-
-    const LEDS: usize = 50;
 
     let mut led: RmtSmartLeds<
         '_,
@@ -43,41 +55,48 @@ pub async fn led_task(
         .unwrap()
     };
 
-    let mut color = Hsv {
+    let color = Hsv {
         hue: 0,
         sat: 255,
         val: 255,
     };
     let mut data;
 
-    for n in 1..10 {
-
-        let r = l_rec.receive().await;
-        // if r.is_err() {
-        //     info!("Timeout");
-        //     break;
-        // }
-        
-    }
-
-    let mut sing = Hsv {
-        hue: 0,
-        sat: 255,
-        val: 255,
-    };
-
-    data = [hsv2rgb(color); LEDS];
-                let fut = led.write(brightness(gamma(data.iter().cloned()), 128));
-    let f = fut.await;
-    f.unwrap();
-    Timer::after_millis(20).await;
-    let fut = led.write(brightness(gamma(data.iter().cloned()), 0));
-    let f = fut.await;
-    f.unwrap();
-    Timer::after_secs(1).await;
-
-
     loop {
+        let r = l_rec.receive();
+        let c = led_status_channel.receive();
+
+        let s = select(r, c).await;
+        
+        data = [hsv2rgb(color); LEDS];
+
+        match s {
+            embassy_futures::select::Either::First(l) => {
+                let fut = led.write(brightness(gamma(data.iter().cloned()), 128));
+                let f = fut.await;
+                f.unwrap();
+                Timer::after_secs(2).await;
+            }
+            embassy_futures::select::Either::Second(r) => {
+
+                let val: Box<dyn Fn(usize) -> u8> = Box::new(|t: usize| if t < r.blink as usize { 255 } else { 0 });
+                let strip_loading = (0..LEDS)
+                    .map(val)
+                    .map(|val| Hsv {
+                        hue: 0,
+                        sat: 255,
+                        val
+                    }).map(hsv2rgb);
+
+                let fut = led.write(brightness(gamma(strip_loading), 128));
+                let f = fut.await;
+                f.unwrap();
+                Timer::after_millis(100).await;
+                
+            }
+        }
+
+        // loop {
         // Iterate over the rainbow!
         for val in 0..=255 {
             // color.val = val;
@@ -89,6 +108,8 @@ pub async fn led_task(
             // that the output it's not too bright.
 
             // This call already prepares the buffer.
+
+            let dic = data.iter().cloned();
             let fut = led.write(brightness(gamma(data.iter().cloned()), val));
             // Put more led.write() calls (for other drivers) and other peripheral preparations here...
 
@@ -101,6 +122,10 @@ pub async fn led_task(
     }
 }
 
+// trait Led {
+//     events: Led
+// }
+
 #[derive(defmt::Format, Encode, Decode)]
 #[cbor(map)]
 pub struct Light {
@@ -111,7 +136,34 @@ pub struct Light {
 }
 
 impl Light {
-    fn new_turned_off(num: i16) -> Self {
+    pub fn get_off(num: i16) -> Self {
         Light { on: false, num }
+    }
+    pub fn get_on(num: i16) -> Self {
+        Light { on: true, num }
+    }
+}
+
+pub struct Ready {
+    enlight: u8,
+    blink: u8,
+    blink_wait: Duration,
+}
+
+impl Ready {
+    pub fn ip() -> Self {
+        Ready {
+            enlight: (LEDS / 4) as u8,
+            blink: (LEDS / 4) as u8,
+            blink_wait: Duration::from_millis(100),
+        }
+    }
+
+    pub fn tcp() -> Self {
+        Ready {
+            enlight: (LEDS / 2) as u8,
+            blink: (LEDS / 4) as u8,
+            blink_wait: Duration::from_millis(100),
+        }
     }
 }

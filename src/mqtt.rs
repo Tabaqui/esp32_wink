@@ -1,15 +1,16 @@
 use core::net::Ipv4Addr;
 
 use core::result::Result::*;
+use alloc::vec::Vec;
 use defmt::{error, info, warn};
 use embassy_executor::task;
 use embassy_net::{Stack, tcp::TcpSocket};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::channel::{Receiver, Sender};
+use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Duration, Timer};
 use rust_mqtt::client::event::Publish;
 
-use crate::led::Light;
+use crate::led::{self, Light, Ready};
 
 use rust_mqtt::Bytes;
 use rust_mqtt::{
@@ -36,8 +37,11 @@ const REMOTE_ENDPOINT: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 168, 1, 1), 1883);
 pub async fn mqtt_task(
     stack: Stack<'static>,
     l_sen: &'static Sender<'static, NoopRawMutex, Light, 3>,
+    led_status_channel: &'static Channel<NoopRawMutex, Ready, 3>
 ) {
-    wait_ip(stack).await;
+    wait_ip(stack, led_status_channel).await;
+
+    
 
     let o = ConnectOptions {
         session_expiry_interval: SessionExpiryInterval::Seconds(600),
@@ -46,8 +50,8 @@ pub async fn mqtt_task(
         will: Some(WillOptions {
             will_qos: QoS::ExactlyOnce,
             will_retain: true,
-            will_topic: MqttString::try_from("el").unwrap(),
-            will_payload: MqttBinary::try_from("joe mama").unwrap(),
+            will_topic: MqttString::try_from("el_status").unwrap(),
+            will_payload: MqttBinary::try_from("el cut down").unwrap(),
             will_delay_interval: 10,
             is_payload_utf8: true,
             message_expiry_interval: Some(20),
@@ -78,7 +82,9 @@ pub async fn mqtt_task(
 
         Timer::after(Duration::from_secs(1)).await;
 
-        connet_tcp_async(&mut socket).await;
+        connet_tcp_async(&mut socket, led_status_channel).await;
+
+
 
         mqtt_connect_async(socket, &mut client, &o).await;
 
@@ -103,17 +109,27 @@ pub async fn mqtt_task(
     }
 }
 
-async fn wait_ip(stack: Stack<'static>) {
+async fn wait_ip(
+    stack: Stack<'static>,
+    led_status_channel: &Channel<NoopRawMutex, Ready, 3>
+
+) {
     loop {
         if stack.is_config_up() {
             break;
         }
         info!("waiting for the stack to get ready");
+        let got_ip = Ready::ip();
+        
+        led_status_channel.send(got_ip).await;
         Timer::after(Duration::from_secs(10)).await;
     }
 }
 
-async fn connet_tcp_async<'a>(socket: &mut TcpSocket<'a>) {
+async fn connet_tcp_async<'a>(
+    socket: &mut TcpSocket<'a>,
+    led_status_channel: &Channel<NoopRawMutex, Ready, 3>,
+) {
     info!("connecting...");
     loop {
         let r = socket.connect(REMOTE_ENDPOINT).await;
@@ -122,9 +138,13 @@ async fn connet_tcp_async<'a>(socket: &mut TcpSocket<'a>) {
             Timer::after(Duration::from_secs(5)).await;
         } else {
             info!("TCP connected!");
+            let got_tcp = Ready::tcp();
+
+            led_status_channel.send(got_tcp).await;
             return;
         }
     }
+    
 }
 
 async fn mqtt_connect_async<'a>(
@@ -192,9 +212,10 @@ async fn subscribe_n_cofirm_async<'a>(topic: TopicName<'a>, client: &mut MyMqttC
                 let msg = minicbor::decode::<Light>(&message);
                 info!("{:?}", message);
                 if let Ok(l) = msg {    
-                    // error!("error decode {:?}", m);
+                    
                     l_sen.send(l).await;
-                    Timer::after(Duration::from_millis(200)).await;
+                    error!(">>");
+                    Timer::after(Duration::from_millis(20)).await;
 
                 }                 
             }
@@ -203,6 +224,7 @@ async fn subscribe_n_cofirm_async<'a>(topic: TopicName<'a>, client: &mut MyMqttC
             }
             Err(e) => {
                 error!("Failed to receive Suback {:?}", e);
+                break;
             }
         }
     }
